@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Macbeth: The Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0a0a0a;
+            color: white;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        
+        #game-container {
+            position: relative;
+            display: inline-block;
+        }
+        
+        #game {
+            border: 2px solid #444;
+            background: #222;
+            display: block;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #fight-box {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            border: 2px solid #666;
+            padding: 15px;
+            font-size: 16px;
+            display: none;
+            pointer-events: none;
+        }
+        
+        #soul {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            background: #00ff00;
+            border-radius: 50%;
+            display: none;
+            pointer-events: none;
+            z-index: 100;
+        }
+        
+        #message {
+            position: absolute;
+            bottom: 5px;
+            left: 20px;
+            right: 20px;
+            color: #ccc;
+            font-size: 14px;
+            text-align: center;
+            pointer-events: none;
+        }
+        
+        #instructions {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game" width="480" height="480"></canvas>
+        <div id="ui">
+            <div id="fight-box"></div>
+            <div id="soul"></div>
+            <div id="message">Use arrow keys to move. Approach Duncan to begin the battle.</div>
+        </div>
+    </div>
+    
+    <div id="instructions">
+        <p><strong>Macbeth: The Game</strong></p>
+        <p>• Move with arrow keys</p>
+        <p>• Avoid the guards or you'll be reset</p>
+        <p>• Approach King Duncan to start the battle</p>
+        <p>• In battle: Use arrow keys to select options and Enter to confirm</p>
+        <p>• During enemy attacks: Move your green soul to dodge projectiles</p>
+        <p>• Click anywhere to start music</p>
+    </div>
+
+    <!-- Background Music -->
+    <audio id="backgroundMusic" loop preload="auto">
+        <source src="music.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+// === CONSTANTS ===
+const TILE_SIZE = 48;
+const MAP_W = 10;
+const MAP_H = 10;
+
+// Map legend (for visuals only, no collision)
+const MAP = [
+  [1,1,1,1,1,1,1,1,1,1],
+  [1,0,2,0,2,0,2,0,2,1],
+  [1,2,0,2,0,2,0,2,0,1],
+  [1,0,2,0,2,0,2,0,2,1],
+  [1,2,0,2,0,2,0,2,0,1],
+  [1,0,2,0,2,0,2,0,2,1],
+  [1,2,0,2,0,2,0,2,0,1],
+  [1,0,2,0,2,0,2,0,2,1],
+  [1,2,0,2,0,2,0,2,0,1],
+  [1,1,1,1,1,1,1,1,1,1],
+];
+
+// === GAME STATE ===
+let gameState = 'explore'; // 'explore', 'battle', 'win', 'lose'
+
+// Player (Macbeth)
+let player = {
+  x: 4 * TILE_SIZE + TILE_SIZE/2,
+  y: 7 * TILE_SIZE + TILE_SIZE/2,
+  hp: 5,
+  maxHp: 5,
+  size: 32,
+  colorBase: '#1a1a2e', // Dark cloak base (blueish black)
+  colorShade: '#0b0b17', // Darker cloak shade
+  speed: 3,
+  movingUp: false,
+  movingDown: false,
+  movingLeft: false,
+  movingRight: false,
+};
+
+// Duncan (Boss)
+let duncan = {
+  x: 4 * TILE_SIZE + TILE_SIZE/2,
+  y: 3 * TILE_SIZE + TILE_SIZE/2,
+  hp: 8,
+  maxHp: 8,
+  size: 40,
+  colorBase: '#d4af37', // Gold crown base
+  colorShade: '#b22222', // Red robes shade
+};
+
+// Guards (faster, smarter patrol)
+let guards = [
+  {
+    x: 1 * TILE_SIZE + TILE_SIZE/2,
+    y: 1 * TILE_SIZE + TILE_SIZE/2,
+    size: 36,
+    colorBase: '#c0c0c0',
+    colorShade: '#909090',
+    speed: 1.2,
+    path: [ {x:1,y:1}, {x:1,y:8} ],
+    currentTarget: 1,
+  },
+  {
+    x: 8 * TILE_SIZE + TILE_SIZE/2,
+    y: 8 * TILE_SIZE + TILE_SIZE/2,
+    size: 36,
+    colorBase: '#c0c0c0',
+    colorShade: '#909090',
+    speed: 1.2,
+    path: [ {x:8,y:8}, {x:8,y:1} ],
+    currentTarget: 1,
+  }
+];
+
+// Battle variables
+let battlePhase = 'menu'; // 'menu', 'playerTurn', 'enemyTurn', 'victory', 'defeat'
+const battleOptions = ['ATTACK'];
+let selectedOption = 0;
+let battleMessages = [];
+let messageIndex = 0;
+let messageTimer = 0;
+let attackPatterns = [];
+let attackTimer = 0;
+let soul = { x: 0, y: 0, hp: 5, invincible: 0 };
+
+// Quote system
+let quoteTimer = 0;
+let currentQuoteIndex = 0;
+
+// DOM elements
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const fightBox = document.getElementById('fight-box');
+const soulElement = document.getElementById('soul');
+const messageDiv = document.getElementById('message');
+const backgroundMusic = document.getElementById('backgroundMusic');
+
+// === AUDIO SETUP ===
+let musicStarted = false;
+
+function startBackgroundMusic() {
+  if (!musicStarted) {
+    backgroundMusic.volume = 0.3; // Set volume to 30%
+    backgroundMusic.play().then(() => {
+      musicStarted = true;
+      console.log("Background music started");
+    }).catch(err => {
+      console.log("Could not play background music:", err);
+    });
+  }
+}
+
+// Auto-start music on first user interaction
+document.addEventListener('click', startBackgroundMusic, { once: true });
+document.addEventListener('keydown', startBackgroundMusic, { once: true });
+
+// === UTILITIES ===
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function lerp(a,b,t) {
+  return a + (b - a)*t;
+}
+
+function pointNear(p1, p2, range=24) {
+  return Math.abs(p1.x - p2.x) < range && Math.abs(p1.y - p2.y) < range;
+}
+
+function checkCollision(x1, y1, w1, h1, x2, y2, w2, h2) {
+  return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
+}
+
+// === DRAW FUNCTIONS ===
+function drawTile(x,y) {
+  let px = x * TILE_SIZE;
+  let py = y * TILE_SIZE;
+  let tile = MAP[y][x];
+
+  switch(tile) {
+    case 0:
+      ctx.fillStyle = '#5a5a5a';
+      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+      ctx.fillStyle = '#484848';
+      for(let i=0; i<5; i++) {
+        ctx.fillRect(px + (i*9), py + ((i*7)%TILE_SIZE), 2, 2);
+      }
+      break;
+    case 1:
+      ctx.fillStyle = '#2d2d2d';
+      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+      ctx.fillStyle = '#1b1b1b';
+      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE/4);
+      ctx.fillRect(px, py, TILE_SIZE/4, TILE_SIZE);
+      break;
+    case 2:
+      ctx.fillStyle = '#660000';
+      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+      ctx.fillStyle = '#440000';
+      ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE/3);
+      ctx.fillStyle = '#ff2222';
+      ctx.fillRect(px + TILE_SIZE*0.2, py + TILE_SIZE*0.2, TILE_SIZE*0.6, TILE_SIZE*0.6);
+      break;
+  }
+}
+
+function drawMacbeth(x,y) {
+  const px = x - player.size/2;
+  const py = y - player.size/2;
+
+  // Cloak base
+  ctx.fillStyle = player.colorBase;
+  ctx.fillRect(px, py + player.size*0.3, player.size, player.size*0.7);
+
+  // Cloak shading (folds)
+  ctx.fillStyle = player.colorShade;
+  ctx.fillRect(px + player.size*0.3, py + player.size*0.3, player.size*0.15, player.size*0.7);
+
+  // Head
+  ctx.fillStyle = '#e0c9a6';
+  ctx.beginPath();
+  ctx.ellipse(px + player.size*0.5, py + player.size*0.2, player.size*0.25, player.size*0.25, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(px + player.size*0.4, py + player.size*0.2, 3, 6, 0, 0, Math.PI*2);
+  ctx.ellipse(px + player.size*0.6, py + player.size*0.2, 3, 6, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Mouth (straight line)
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(px + player.size*0.38, py + player.size*0.33);
+  ctx.lineTo(px + player.size*0.62, py + player.size*0.33);
+  ctx.stroke();
+}
+
+function drawDuncan(x,y) {
+  const px = x - duncan.size/2;
+  const py = y - duncan.size/2;
+
+  // Robes
+  ctx.fillStyle = duncan.colorShade;
+  ctx.fillRect(px + duncan.size*0.15, py + duncan.size*0.4, duncan.size*0.7, duncan.size*0.6);
+
+  // Robe stripes
+  ctx.strokeStyle = '#7a0000';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(px + duncan.size*0.25, py + duncan.size*0.65);
+  ctx.lineTo(px + duncan.size*0.75, py + duncan.size*0.65);
+  ctx.stroke();
+
+  // Head
+  ctx.fillStyle = '#e0c9a6';
+  ctx.beginPath();
+  ctx.ellipse(px + duncan.size*0.5, py + duncan.size*0.2, duncan.size*0.25, duncan.size*0.25, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Crown base
+  ctx.fillStyle = duncan.colorBase;
+  ctx.fillRect(px + duncan.size*0.2, py + duncan.size*0.05, duncan.size*0.6, duncan.size*0.1);
+
+  // Crown spikes
+  ctx.beginPath();
+  const spikes = 5;
+  for(let i=0; i<spikes; i++) {
+    let spikeX = px + duncan.size*0.2 + i * (duncan.size*0.12);
+    ctx.moveTo(spikeX, py + duncan.size*0.05);
+    ctx.lineTo(spikeX + duncan.size*0.06, py);
+    ctx.lineTo(spikeX + duncan.size*0.12, py + duncan.size*0.05);
+  }
+  ctx.fill();
+}
+
+function drawGuard(g) {
+  const px = g.x - g.size/2;
+  const py = g.y - g.size/2;
+
+  // Armor base
+  ctx.fillStyle = g.colorBase;
+  ctx.fillRect(px, py, g.size, g.size);
+
+  // Armor shading plates
+  ctx.fillStyle = g.colorShade;
+  ctx.fillRect(px + g.size*0.15, py + g.size*0.2, g.size*0.2, g.size*0.6);
+  ctx.fillRect(px + g.size*0.6, py + g.size*0.2, g.size*0.2, g.size*0.6);
+
+  // Helmet dome
+  ctx.beginPath();
+  ctx.fillStyle = '#d3d3d3';
+  ctx.ellipse(px + g.size*0.5, py + g.size*0.15, g.size*0.4, g.size*0.3, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Visor slit
+  ctx.strokeStyle = '#808080';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(px + g.size*0.2, py + g.size*0.15);
+  ctx.lineTo(px + g.size*0.8, py + g.size*0.15);
+  ctx.stroke();
+}
+
+function drawPlayerHP() {
+  ctx.fillStyle = 'white';
+  ctx.font = '14px monospace';
+  ctx.fillText(`Macbeth HP: ${player.hp} / ${player.maxHp}`, 10, 20);
+}
+
+function drawDuncanHP() {
+  ctx.fillStyle = 'white';
+  ctx.font = '14px monospace';
+  ctx.fillText(`Duncan HP: ${duncan.hp} / ${duncan.maxHp}`, 10, 40);
+}
+
+// === MACBETH QUOTES ===
+const macbethQuotes = [
+  "Is this a dagger which I see before me?",
+  "Out, damned spot! out, I say!",
+  "Fair is foul, and foul is fair.",
+  "What's done cannot be undone.",
+  "Double, double toil and trouble!",
+  "Tomorrow, and tomorrow, and tomorrow...",
+  "I am in blood stepp'd in so far...",
+  "Stars, hide your fires!",
+  "Look like the innocent flower, but be the serpent under't.",
+  "Something wicked this way comes.",
+  "Screw your courage to the sticking-place.",
+  "All hail, Macbeth! that shalt be king hereafter!",
+  "Life's but a walking shadow...",
+  "False face must hide what the false heart doth know.",
+  "I have no spur to prick the sides of my intent...",
+  "By the pricking of my thumbs, something wicked this way comes.",
+  "Will all great Neptune's ocean wash this blood clean from my hand?",
+  "Sleep no more! Macbeth does murder sleep.",
+  "Things bad begun make strong themselves by ill.",
+  "I dare do all that may become a man."
+];
+
+function updateQuotes() {
+  quoteTimer++;
+  if (quoteTimer > 300) { // Show new quote every 5 seconds (60fps * 5)
+    quoteTimer = 0;
+    currentQuoteIndex = Math.floor(Math.random() * macbethQuotes.length);
+  }
+}
+
+// === GAME LOOP ===
+function update() {
+  if(gameState === 'explore') {
+    updateExplore();
+    updateQuotes();
+  } else if(gameState === 'battle') {
+    updateBattle();
+  }
+  draw();
+  requestAnimationFrame(update);
+}
+
+// === EXPLORE MODE ===
+function updateExplore() {
+  // Move player freely
+  if(keysPressed['ArrowUp']) player.y -= player.speed;
+  if(keysPressed['ArrowDown']) player.y += player.speed;
+  if(keysPressed['ArrowLeft']) player.x -= player.speed;
+  if(keysPressed['ArrowRight']) player.x += player.speed;
+
+  // Clamp to canvas bounds
+  player.x = Math.min(Math.max(player.x, 0), canvas.width);
+  player.y = Math.min(Math.max(player.y, 0), canvas.height);
+
+  // Move guards along paths
+  guards.forEach(g => {
+    let target = g.path[g.currentTarget];
+    let tx = target.x * TILE_SIZE + TILE_SIZE/2;
+    let ty = target.y * TILE_SIZE + TILE_SIZE/2;
+
+    let dx = tx - g.x;
+    let dy = ty - g.y;
+    let dist = Math.hypot(dx, dy);
+
+    if(dist < 2) {
+      // Switch target
+      g.currentTarget = (g.currentTarget + 1) % g.path.length;
+    } else {
+      g.x += (dx / dist) * g.speed;
+      g.y += (dy / dist) * g.speed;
+    }
+  });
+
+  // Check proximity to guards - if close, reset player position (simulate "caught")
+  for(let g of guards) {
+    if(distance(player, g) < (player.size/2 + g.size/2) - 5) {
+      messageDiv.textContent = "You were caught by a guard! YOU MUST KILL DUNCAN!!!";
+      player.x = 4 * TILE_SIZE + TILE_SIZE/2;
+      player.y = 7 * TILE_SIZE + TILE_SIZE/2;
+      setTimeout(() => {
+        if (gameState === 'explore') {
+          messageDiv.textContent = macbethQuotes[currentQuoteIndex];
+        }
+      }, 2000);
+      break;
+    }
+  }
+
+  // Update message with current quote
+  if (!messageDiv.textContent.includes("caught") && !messageDiv.textContent.includes("arrow keys")) {
+    messageDiv.textContent = macbethQuotes[currentQuoteIndex];
+  } else if (messageDiv.textContent.includes("arrow keys")) {
+    // Only show the default message briefly at start
+    setTimeout(() => {
+      if (gameState === 'explore') {
+        messageDiv.textContent = macbethQuotes[currentQuoteIndex];
+      }
+    }, 3000);
+  }
+
+  // Check proximity to Duncan to start battle
+  if(distance(player, duncan) < 48) {
+    startBattle();
+  }
+}
+
+// === BATTLE MODE ===
+function startBattle() {
+  gameState = 'battle';
+  battlePhase = 'menu';
+  selectedOption = 0;
+  battleMessages = ["King Duncan appears! What will you do?"];
+  messageIndex = 0;
+  messageTimer = 0;
+  fightBox.style.display = 'block';
+  soulElement.style.display = 'none';
+  messageDiv.textContent = "Choose your action with arrow keys and Enter";
+  soul.hp = player.hp;
+  soul.invincible = 0;
+  soul.x = canvas.width / 2;
+  soul.y = canvas.height - 120;
+  renderBattleMenu();
+}
+
+function updateBattle() {
+  if(battlePhase === 'menu') {
+    // Waiting for user input, no movement needed
+  } else if(battlePhase === 'playerTurn') {
+    updatePlayerAttack();
+  } else if(battlePhase === 'enemyTurn') {
+    updateEnemyAttack();
+  } else if(battlePhase === 'victory') {
+    // Show victory message
+  } else if(battlePhase === 'defeat') {
+    // Show defeat message
+  }
+}
+
+let projectiles = [];
+
+function updatePlayerAttack() {
+  // In this simplified battle, attacking is automatic on 'ATTACK'
+  // We simulate a quick hit and then enemy turn
+  battleMessages.push("You attack Duncan!");
+  duncan.hp -= 1;
+  if(duncan.hp <= 0) {
+    duncan.hp = 0;
+    battlePhase = 'victory';
+    battleMessages.push("You defeated King Duncan! You now will claim the throne.");
+    messageDiv.textContent = "You won! Press Enter to exit.";
+    return;
+  }
+  battlePhase = 'enemyTurn';
+  setupEnemyAttack();
+}
+
+function setupEnemyAttack() {
+  // Spawn some projectiles to dodge
+  projectiles = [];
+  const count = 5;
+  for(let i=0; i<count; i++) {
+    let px = Math.random() * (canvas.width - 40) + 20;
+    let py = -20;
+
+    let dx = soul.x - px;
+    let dy = soul.y - py;
+    let dist = Math.hypot(dx, dy);
+    let speed = 3 + Math.random() * 2;
+
+    projectiles.push({
+    x: px,
+    y: py,
+    size: 16,
+    speed: speed,
+    dx: (dx / dist) * speed,
+    dy: (dy / dist) * speed,
+    });
+
+  }
+  soul.x = canvas.width / 2;
+  soul.y = canvas.height - 120;
+  soul.invincible = 0;
+  soul.hp = player.hp;
+  soulElement.style.display = 'block';
+  messageDiv.textContent = "Dodge the attacks! Each hit deals 1 damage!";
+  attackTimer = 0;
+}
+
+function updateEnemyAttack() {
+  // Move projectiles down and sideways
+  projectiles.forEach(p => {
+    p.x += p.dx;
+    p.y += p.dy;
+  });
+
+  // Remove projectiles out of screen and spawn new ones
+  projectiles = projectiles.filter(p => p.y < canvas.height + 20);
+  while(projectiles.length < 5) {
+    projectiles.push({
+      x: Math.random() * (canvas.width - 40) + 20,
+      y: -20,
+      size: 16,
+      speed: 3 + Math.random() * 2,
+      dx: (Math.random() - 0.5) * 1.5,
+      dy: 3 + Math.random()*1.5,
+    });
+  }
+
+  // Move soul by arrow keys
+  if(keysPressed['ArrowLeft']) soul.x -= 5;
+  if(keysPressed['ArrowRight']) soul.x += 5;
+  if(keysPressed['ArrowUp']) soul.y -= 5;
+  if(keysPressed['ArrowDown']) soul.y += 5;
+
+  // Clamp soul to canvas bounds
+  soul.x = Math.max(20, Math.min(soul.x, canvas.width - 20));
+  soul.y = Math.max(20, Math.min(soul.y, canvas.height - 20));
+
+  // Collision with projectiles - DEAL 1 DAMAGE
+  if(soul.invincible <= 0) {
+    for(let p of projectiles) {
+      let dx = soul.x - p.x;
+      let dy = soul.y - p.y;
+      let dist = Math.hypot(dx, dy);
+      if(dist < p.size/2 + 7) {
+        soul.hp -= 1; // Deal exactly 1 damage
+        player.hp = soul.hp; // Update player HP immediately
+        soul.invincible = 60; // invincible for 1 second approx
+        messageDiv.textContent = `Hit! You took 1 damage! HP: ${soul.hp}/${player.maxHp}`;
+        
+        if(soul.hp <= 0) {
+          battlePhase = 'defeat';
+          messageDiv.textContent = "You lost the battle! Press Enter to try again.";
+          soulElement.style.display = 'none';
+        }
+        break;
+      }
+    }
+  } else {
+    soul.invincible--;
+  }
+
+  // After some time or if defeated, end enemy turn
+  attackTimer++;
+  if(attackTimer > 600 || battlePhase === 'defeat') {
+    if(battlePhase !== 'defeat') {
+      player.hp = soul.hp; // update player HP after dodging
+      battlePhase = 'menu';
+      fightBox.innerHTML = "";
+      messageDiv.textContent = "Your turn! Choose an option.";
+      attackTimer = 0;
+      projectiles = [];
+      soulElement.style.display = 'none';
+      renderBattleMenu();
+    }
+  }
+}
+
+// === INPUT HANDLING ===
+const keysPressed = {};
+
+window.addEventListener('keydown', e => {
+  if(e.repeat) return;
+  keysPressed[e.key] = true;
+
+  if(gameState === 'battle') {
+    if(battlePhase === 'menu') {
+      if(e.key === 'ArrowUp') {
+        selectedOption = (selectedOption + battleOptions.length - 1) % battleOptions.length;
+        renderBattleMenu();
+      } else if(e.key === 'ArrowDown') {
+        selectedOption = (selectedOption + 1) % battleOptions.length;
+        renderBattleMenu();
+      } else if(e.key === 'Enter') {
+        executeBattleOption(selectedOption);
+      }
+    } else if(battlePhase === 'victory' || battlePhase === 'defeat') {
+      if(e.key === 'Enter') {
+        // Exit battle
+        if(battlePhase === 'victory') {
+          messageDiv.textContent = macbethQuotes[Math.floor(Math.random() * macbethQuotes.length)];
+          gameState = 'explore';
+          fightBox.style.display = 'none';
+          soulElement.style.display = 'none';
+        } else if(battlePhase === 'defeat') {
+          // Reset to explore with full health
+          player.hp = player.maxHp;
+          duncan.hp = duncan.maxHp; // Reset Duncan too
+          messageDiv.textContent = macbethQuotes[Math.floor(Math.random() * macbethQuotes.length)];
+          gameState = 'explore';
+          fightBox.style.display = 'none';
+          soulElement.style.display = 'none';
+        }
+      }
+    }
+  }
+});
+
+window.addEventListener('keyup', e => {
+  keysPressed[e.key] = false;
+});
+
+function executeBattleOption(idx) {
+  let option = battleOptions[idx];
+  if(option === 'ATTACK') {
+    fightBox.innerHTML = "";
+    messageDiv.textContent = "You attack Duncan!";
+    battlePhase = 'playerTurn';
+  } else if(option === 'MERCY') {
+    if(duncan.hp < 3) {
+      battlePhase = 'victory';
+      messageDiv.textContent = "King Duncan refuses to spare traitors!";
+    } else {
+      messageDiv.textContent = "King Duncan refuses to spare traitors!";
+      battlePhase = 'enemyTurn';
+      setupEnemyAttack();
+    }
+  }
+}
+
+function renderBattleMenu() {
+  let html = '';
+  for(let i=0; i<battleOptions.length; i++) {
+    if(i === selectedOption) {
+      html += `> ${battleOptions[i]} <br/>`;
+    } else {
+      html += `  ${battleOptions[i]} <br/>`;
+    }
+  }
+  fightBox.innerHTML = html;
+}
+
+// === DRAW MAIN ===
+function draw() {
+  // Clear
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Draw map tiles
+  for(let y=0; y<MAP_H; y++) {
+    for(let x=0; x<MAP_W; x++) {
+      drawTile(x,y);
+    }
+  }
+
+  // Draw Duncan (only in explore and battle)
+  drawDuncan(duncan.x, duncan.y);
+
+  // Draw Guards
+  guards.forEach(g => drawGuard(g));
+
+  // Draw Player
+  drawMacbeth(player.x, player.y);
+
+  // Draw player HP in explore
+  if(gameState === 'explore') {
+    drawPlayerHP();
+  }
+
+  // Draw Battle UI
+  if(gameState === 'battle') {
+    drawPlayerHP();
+    drawDuncanHP();
+
+    if(battlePhase === 'enemyTurn') {
+      // Draw projectiles
+      ctx.fillStyle = 'red';
+      projectiles.forEach(p => {
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, p.size/2, p.size/2, 0, 0, Math.PI*2);
+        ctx.fill();
+      });
+
+      // Update soul position on screen
+      soulElement.style.left = (soul.x - 7) + 'px';
+      soulElement.style.top = (soul.y - 7) + 'px';
+      
+      // Flash soul if invincible
+      if (soul.invincible > 0) {
+        soulElement.style.opacity = Math.sin(soul.invincible * 0.5) * 0.5 + 0.5;
+      } else {
+        soulElement.style.opacity = '1';
+      }
+    } else {
+      soulElement.style.display = 'none';
+    }
+  } else {
+    soulElement.style.display = 'none';
+  }
+}
+
+// Start main loop
+messageDiv.textContent = macbethQuotes[0];
+currentQuoteIndex = 0;
+update();
+    </script>
+</body>
+</html>
