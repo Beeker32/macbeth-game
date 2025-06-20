@@ -102,6 +102,11 @@
     </audio>
 
     <script>
+
+
+
+// Mrs. B. do you even know how to read code? 😋
+
 // === CONSTANTS ===
 const TILE_SIZE = 48;
 const MAP_W = 10;
@@ -203,7 +208,7 @@ let musicStarted = false;
 
 function startBackgroundMusic() {
   if (!musicStarted) {
-    backgroundMusic.volume = 0.3; // Set volume to 30%
+    backgroundMusic.volume = 1; // Set volume to 100%
     backgroundMusic.play().then(() => {
       musicStarted = true;
       console.log("Background music started");
@@ -212,6 +217,8 @@ function startBackgroundMusic() {
     });
   }
 }
+
+// HIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
 
 // Auto-start music on first user interaction
 document.addEventListener('click', startBackgroundMusic, { once: true });
@@ -379,6 +386,8 @@ function drawDuncanHP() {
   ctx.fillText(`Duncan HP: ${duncan.hp} / ${duncan.maxHp}`, 10, 40);
 }
 
+// Of course you only came here for the quotes, shame on you!
+
 // === MACBETH QUOTES ===
 const macbethQuotes = [
   "Is this a dagger which I see before me?",
@@ -523,7 +532,7 @@ let projectiles = [];
 
 function updatePlayerAttack() {
   // In this simplified battle, attacking is automatic on 'ATTACK'
-  // We simulate a quick hit and then enemy turn
+  // Simulate a quick hit and then enemy turn
   battleMessages.push("You attack Duncan!");
   duncan.hp -= 1;
   if(duncan.hp <= 0) {
@@ -712,6 +721,11 @@ function renderBattleMenu() {
   }
   fightBox.innerHTML = html;
 }
+
+// Last message for you Mrs. B.
+// I am soooo happy right now because I am proud of this (my first ever game to run in a browser!)
+// But I am also so sad because it's the end of the semester and I know for a fact (not just me trying to get brownie points 😉) that I will miss this class in the future. I have never had so much fun during English class.
+// You are the best English teacher I could have asked for, thank you.
 
 // === DRAW MAIN ===
 function draw() {
