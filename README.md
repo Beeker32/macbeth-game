@@ -1,6 +1,6 @@
 # Macbeth: The Game
 
-#Play the game [here](https://beeker32.github.io/macbeth-game/)
+# Play the game [here](https://beeker32.github.io/macbeth-game/)
 
 A simple single-file Undertale inspired game with the goal of defeating King Duncan, and claiming Scotland's throne!
 
